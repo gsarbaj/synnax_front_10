@@ -39,3 +39,51 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# === Node / package managers ===
+/node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# === Next.js build output ===
+/.next
+/out
+
+# === TypeScript ===
+/*.tsbuildinfo
+**/*.tsbuildinfo
+
+# === Env files (ты используешь только .env) ===
+.env
+# если позже добавишь окружения — раскомментируй:
+# .env.local
+# .env.development.local
+# .env.test.local
+# .env.production.local
+
+# === IDE / Editors ===
+# JetBrains (WebStorm, IDEA)
+.idea/
+# Zed editor
+.zed/
+# необязательно, но часто полезно:
+.vscode/
+
+# === Logs / temp ===
+/logs
+*.log
+.nyc_output
+coverage/
+.tmp/
+.temp/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Misc tool caches (безопасно игнорировать) ===
+.eslintcache
+.stylelintcache
+.parcel-cache
+.cache
