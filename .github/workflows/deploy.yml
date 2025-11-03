@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # ---- Общие настройки ----
   NODE_VERSION: '20.x'
   WORKDIR: frontend
   APP_NAME: app_synnax
@@ -19,24 +18,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Код
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      # 2) Node + кэш npm (ВАЖНО: путь до lock-файла внутри frontend/)
-      - name: 🟢 Setup Node (with npm cache)
+      # Диагностика путей (один раз полезно оставить)
+      - name: 🔎 Debug paths
+        run: |
+          echo "WORKDIR=${{ env.WORKDIR }}"
+          ls -la
+          echo "----"
+          ls -la "${{ env.WORKDIR }}" || true
+          echo "----"
+          [ -f "${{ env.WORKDIR }}/package-lock.json" ] && echo "package-lock.json FOUND" || (echo "package-lock.json MISSING" && exit 1)
+
+      - name: 🟢 Setup Node (без встроенного кэша)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: ${{ env.WORKDIR }}/package-lock.json
 
-      # 3) Установка зависимостей
+      # Ручной кэш npm (ключ — хэш package-lock.json из frontend/)
+      # Если lock-файл не в frontend/, поменяй путь ниже!
+      - name: ♻️ Cache npm (~/.npm)
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles(format('{0}/package-lock.json', env.WORKDIR)) }}
+          restore-keys: |
+            npm-
+
       - name: 📦 Install deps (npm ci)
         working-directory: ${{ env.WORKDIR }}
+        env:
+          npm_config_cache: ~/.npm
         run: npm ci
 
-      # 4) (Опционально) проверки
       - name: 🧹 Lint (non-blocking)
         working-directory: ${{ env.WORKDIR }}
         run: npm run lint || true
@@ -45,12 +60,10 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: npm run typecheck || true
 
-      # 5) .env.production для билда/рантайма
       - name: 🔐 Create .env.production
         working-directory: ${{ env.WORKDIR }}
         run: printf "%s" "${{ secrets.ENV_FILE_PRODUCTION }}" > .env.production
 
-      # 6) Сборка Next.js в режиме standalone
       - name: 🏗️ Build (Next.js standalone)
         working-directory: ${{ env.WORKDIR }}
         env:
@@ -58,7 +71,6 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
         run: npm run build
 
-      # 7) Упаковка бандла для деплоя
       - name: 📁 Pack deploy bundle
         run: |
           set -euxo pipefail
@@ -69,14 +81,12 @@ jobs:
           cp "$WORKDIR/.env.production" deploy_bundle/.env.production
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
 
-      # 8) SSH подготовка
       - name: 🔑 Configure SSH
         run: |
           install -m 600 /dev/null ~/.ssh/id_ed25519
           printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
-      # 9) Выгрузка нового релиза
       - name: 📤 Upload bundle to server (new release)
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -87,7 +97,6 @@ jobs:
           rsync -e "ssh -p ${{ env.SSH_PORT }}" -az --delete \
             deploy_bundle/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE_DIR/"
 
-      # 10) Переключение current и рестарт tmux
       - name: 🔁 Atomic symlink switch + tmux restart
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -100,26 +109,17 @@ jobs:
             APP_NAME="'${APP_NAME}'"
             RELEASE_DIR="'${RELEASE_DIR}'"
 
-            # Переключаем current → новый релиз
             ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 
-            # Перезапуск tmux
             tmux kill-session -t "$APP_NAME" || true
             cd "$CURRENT_LINK"
-
-            # Подгружаем env (если нужен на рантайме)
-            set -a
-            [ -f ./.env.production ] && . ./.env.production
-            set +a
+            set -a; [ -f ./.env.production ] && . ./.env.production; set +a
 
             PORT="${PORT:-3000}"
             HOST="${HOST:-127.0.0.1}"
-
-            # Запуск standalone-сервера (node server.js лежит в standalone)
             tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
           EOSSH
 
-      # 11) Дымовой тест (если PUBLIC_URL задан)
       - name: ✅ Smoke test
         if: ${{ vars.PUBLIC_URL != '' }}
         run: curl -fsSL --max-time 5 "${{ vars.PUBLIC_URL }}/" >/dev/null
