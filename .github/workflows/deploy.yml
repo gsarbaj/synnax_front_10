@@ -7,7 +7,7 @@ on:
 
 env:
   NODE_VERSION: '20.x'
-  WORKDIR: .                      # проект в КОРНЕ
+  WORKDIR: .
   APP_NAME: app_synnax
   RELEASES_DIR: /var/www/synnax/releases
   CURRENT_LINK: /var/www/synnax/current
@@ -21,20 +21,18 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      # Диагностика путей (разово полезно)
+      # (разово) проверим, что lock-файл в корне
       - name: 🔎 Debug paths
         run: |
-          echo "WORKDIR=${{ env.WORKDIR }}"
           ls -la
-          echo "----"
           [ -f "package-lock.json" ] && echo "package-lock.json FOUND" || (echo "package-lock.json MISSING" && exit 1)
 
-      - name: 🟢 Setup Node (без встроенного кэша)
+      - name: 🟢 Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # Ручной кэш npm по хэшу КОРНЕВОГО package-lock.json
+      # Ручной кэш npm по хэшу корневого package-lock.json
       - name: ♻️ Cache npm (~/.npm)
         uses: actions/cache@v4
         with:
@@ -44,25 +42,14 @@ jobs:
             npm-
 
       - name: 📦 Install deps (npm ci)
-        working-directory: ${{ env.WORKDIR }}
         env:
           npm_config_cache: ~/.npm
         run: npm ci
 
-      - name: 🧹 Lint (non-blocking)
-        working-directory: ${{ env.WORKDIR }}
-        run: npm run lint || true
-
-      - name: 🔎 Typecheck (non-blocking)
-        working-directory: ${{ env.WORKDIR }}
-        run: npm run typecheck || true
-
       - name: 🔐 Create .env.production
-        working-directory: ${{ env.WORKDIR }}
         run: printf "%s" "${{ secrets.ENV_FILE_PRODUCTION }}" > .env.production
 
       - name: 🏗️ Build (Next.js standalone)
-        working-directory: ${{ env.WORKDIR }}
         env:
           NODE_ENV: production
           NEXT_TELEMETRY_DISABLED: '1'
@@ -78,26 +65,29 @@ jobs:
           cp ".env.production" deploy_bundle/.env.production
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
 
-      - name: 🔑 Configure SSH (manual file)
-        run: |
-          set -eux
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # ВАЖНО: вычищаем CRLF и гарантируем перевод строки в конце
-          (printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r') > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          
-          ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+      # ==== SSH auth через ssh-agent (надежно) ====
+      - name: 🔑 Start ssh-agent (load SSH_PRIVATE_KEY)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # Добавляем known_hosts (чтобы ssh/rsync не спрашивали подтверждение)
       - name: 🧾 Add known_hosts
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      - name: 🔍 Debug ssh-agent keys
+        run: ssh-add -l || true
+
+      - name: 🔌 Test SSH connectivity
+        run: |
+          ssh -o StrictHostKeyChecking=yes -p ${{ env.SSH_PORT }} \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'whoami && echo OK'
+
+      # ==== Деплой ====
       - name: 📤 Upload bundle to server (new release)
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
