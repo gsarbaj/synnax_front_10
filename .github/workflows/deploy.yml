@@ -117,7 +117,7 @@ jobs:
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
               tmux new -d -s "$APP_NAME" "NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
               tmux ls >/dev/null 2>&1 && echo "tmux session '$APP_NAME' started"
-            EOSSH
+          EOSSH
 
       - name: ✅ Smoke test
         if: ${{ vars.PUBLIC_URL != '' }}
