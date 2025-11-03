@@ -1,12 +1,12 @@
 name: Deploy synnax.lt
 
 on:
-  workflow_dispatch: { }         # позволяет запустить вручную из Actions
+  workflow_dispatch: {} # позволяет запустить вручную из Actions
   push:
-    branches: [ main ]          # срабатывает при пуше в main
+    branches: [main] # срабатывает при пуше в main
 
 env:
-  NODE_VERSION: '20.x'
+  NODE_VERSION: "20.x"
   WORKDIR: .
   APP_NAME: app_synnax
   RELEASES_DIR: /var/www/synnax/releases
@@ -50,7 +50,7 @@ jobs:
       - name: 🏗️ Build (Next.js standalone)
         env:
           NODE_ENV: production
-          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
 
       - name: 📁 Pack deploy bundle
@@ -103,22 +103,22 @@ jobs:
             APP_NAME="${APP_NAME}" \
             RELEASE_DIR="${RELEASE_DIR}" \
             'bash -s' <<'EOSSH'
-  set -euo pipefail
-  [ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
-  mkdir -p "$(dirname "$CURRENT_LINK")"
-  ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
-  if command -v tmux >/dev/null 2>&1; then
-  tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
-  else
-  echo "tmux not found on server"; exit 1
-  fi
-  cd "$CURRENT_LINK"
-  set -a; [ -f ./.env.production ] && . ./.env.production; set +a
-  : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
-  tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
-  tmux ls >/dev/null 2>&1 && echo "tmux session '$APP_NAME' started"
-  EOSSH
+              set -euo pipefail
+              [ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
+              mkdir -p "$(dirname "$CURRENT_LINK")"
+              ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+              if command -v tmux >/dev/null 2>&1; then
+                tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
+              else
+                echo "tmux not found on server"; exit 1
+              fi
+              cd "$CURRENT_LINK"
+              set -a; [ -f ./.env.production ] && . ./.env.production; set +a
+              : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
+              tmux new -d -s "$APP_NAME" "NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
+              tmux ls >/dev/null 2>&1 && echo "tmux session '$APP_NAME' started"
+            EOSSH
 
-  - name: ✅ Smoke test
-    if: ${{ vars.PUBLIC_URL != '' }}
-    run: curl -fsSL --max-time 5 "${{ vars.PUBLIC_URL }}/" >/dev/null
+      - name: ✅ Smoke test
+        if: ${{ vars.PUBLIC_URL != '' }}
+        run: curl -fsSL --max-time 5 "${{ vars.PUBLIC_URL }}/" >/dev/null
