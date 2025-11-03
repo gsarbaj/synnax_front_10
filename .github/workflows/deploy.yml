@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 env:
+  # ---- Общие настройки ----
   NODE_VERSION: '20.x'
   WORKDIR: frontend
   APP_NAME: app_synnax
@@ -18,62 +19,86 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧩 Checkout repo
+      # 1) Код
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Node.js
+      # 2) Node + кэш npm (ВАЖНО: путь до lock-файла внутри frontend/)
+      - name: 🟢 Setup Node (with npm cache)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: ${{ env.WORKDIR }}/package-lock.json
 
-      - name: 📦 Install dependencies
+      # 3) Установка зависимостей
+      - name: 📦 Install deps (npm ci)
         working-directory: ${{ env.WORKDIR }}
         run: npm ci
 
-      - name: 🏗️ Build Next.js (standalone)
+      # 4) (Опционально) проверки
+      - name: 🧹 Lint (non-blocking)
+        working-directory: ${{ env.WORKDIR }}
+        run: npm run lint || true
+
+      - name: 🔎 Typecheck (non-blocking)
+        working-directory: ${{ env.WORKDIR }}
+        run: npm run typecheck || true
+
+      # 5) .env.production для билда/рантайма
+      - name: 🔐 Create .env.production
+        working-directory: ${{ env.WORKDIR }}
+        run: printf "%s" "${{ secrets.ENV_FILE_PRODUCTION }}" > .env.production
+
+      # 6) Сборка Next.js в режиме standalone
+      - name: 🏗️ Build (Next.js standalone)
         working-directory: ${{ env.WORKDIR }}
         env:
           NODE_ENV: production
-        run: |
-          echo "${{ secrets.ENV_FILE_PRODUCTION }}" > .env.production
-          npm run build
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
 
-      - name: 📁 Prepare deploy bundle
+      # 7) Упаковка бандла для деплоя
+      - name: 📁 Pack deploy bundle
         run: |
+          set -euxo pipefail
           mkdir -p deploy_bundle
           rsync -a --delete "$WORKDIR/.next/standalone/" deploy_bundle/
           rsync -a "$WORKDIR/.next/static" deploy_bundle/.next/static
           rsync -a "$WORKDIR/public" deploy_bundle/public || true
           cp "$WORKDIR/.env.production" deploy_bundle/.env.production
-          echo "Build $GITHUB_SHA" > deploy_bundle/RELEASE.txt
+          echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
 
+      # 8) SSH подготовка
       - name: 🔑 Configure SSH
         run: |
           install -m 600 /dev/null ~/.ssh/id_ed25519
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: 📤 Upload to server
+      # 9) Выгрузка нового релиза
+      - name: 📤 Upload bundle to server (new release)
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          set -eux
+          set -euxo pipefail
           RELEASE_DIR="${{ env.RELEASES_DIR }}/$TS"
           ssh -p "${{ env.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '$RELEASE_DIR'"
-          rsync -e "ssh -p ${{ env.SSH_PORT }}" -az deploy_bundle/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE_DIR/"
+          rsync -e "ssh -p ${{ env.SSH_PORT }}" -az --delete \
+            deploy_bundle/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE_DIR/"
 
-      - name: 🔁 Switch symlink & restart tmux
+      # 10) Переключение current и рестарт tmux
+      - name: 🔁 Atomic symlink switch + tmux restart
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          set -eux
+          set -euxo pipefail
           RELEASE_DIR="${{ env.RELEASES_DIR }}/${TS}"
           ssh -p "${{ env.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -s <<'EOSSH'
-            set -e
-            CURRENT_LINK="/var/www/synnax/current"
-            APP_NAME="app_synnax"
+            set -euo pipefail
+            CURRENT_LINK="'${CURRENT_LINK}'"
+            APP_NAME="'${APP_NAME}'"
+            RELEASE_DIR="'${RELEASE_DIR}'"
 
             # Переключаем current → новый релиз
             ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
@@ -81,11 +106,20 @@ jobs:
             # Перезапуск tmux
             tmux kill-session -t "$APP_NAME" || true
             cd "$CURRENT_LINK"
-            set -a; [ -f .env.production ] && . ./.env.production; set +a
-            PORT=3000
-            tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=127.0.0.1 PORT=$PORT node server.js"
+
+            # Подгружаем env (если нужен на рантайме)
+            set -a
+            [ -f ./.env.production ] && . ./.env.production
+            set +a
+
+            PORT="${PORT:-3000}"
+            HOST="${HOST:-127.0.0.1}"
+
+            # Запуск standalone-сервера (node server.js лежит в standalone)
+            tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
           EOSSH
 
-      - name: ✅ Smoke test (optional)
+      # 11) Дымовой тест (если PUBLIC_URL задан)
+      - name: ✅ Smoke test
         if: ${{ vars.PUBLIC_URL != '' }}
         run: curl -fsSL --max-time 5 "${{ vars.PUBLIC_URL }}/" >/dev/null
