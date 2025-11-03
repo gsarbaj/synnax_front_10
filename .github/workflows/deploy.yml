@@ -78,17 +78,23 @@ jobs:
           cp ".env.production" deploy_bundle/.env.production
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
 
-      - name: 🔑 Configure SSH
+      - name: 🔑 Configure SSH (manual file)
         run: |
           set -eux
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-
-          # пишем приватный ключ (и на всякий случай убираем CRLF, если ключ копировали из Windows)
-          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
+          
+          # ВАЖНО: вычищаем CRLF и гарантируем перевод строки в конце
+          (printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r') > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          
+          ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
-          # known_hosts для хоста (и выставим права)
+      # Добавляем known_hosts (чтобы ssh/rsync не спрашивали подтверждение)
+      - name: 🧾 Add known_hosts
+        run: |
+          mkdir -p ~/.ssh
           ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
