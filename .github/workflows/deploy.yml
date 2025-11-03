@@ -103,23 +103,38 @@ jobs:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euxo pipefail
-          RELEASE_DIR="${{ env.RELEASES_DIR }}/${TS}"
-          ssh -p "${{ env.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -s <<'EOSSH'
-            set -euo pipefail
-            CURRENT_LINK="'${CURRENT_LINK}'"
-            APP_NAME="'${APP_NAME}'"
-            RELEASE_DIR="'${RELEASE_DIR}'"
+          RELEASE_DIR="${RELEASES_DIR}/${TS}"
 
-            ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+          # Перекидываем переменные окружения на удалённую сторону и выполняем скрипт
+          ssh -p "${SSH_PORT}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            CURRENT_LINK="${CURRENT_LINK}" \
+            APP_NAME="${APP_NAME}" \
+            RELEASE_DIR="${RELEASE_DIR}" \
+            'bash -s' <<'EOSSH'
+              set -euo pipefail
 
-            tmux kill-session -t "$APP_NAME" || true
-            cd "$CURRENT_LINK"
-            set -a; [ -f ./.env.production ] && . ./.env.production; set +a
+              # sanity checks
+              [ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
+              mkdir -p "$(dirname "$CURRENT_LINK")"
 
-            PORT="${PORT:-3000}"
-            HOST="${HOST:-127.0.0.1}"
-            tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
-          EOSSH
+              # переключаем симлинк
+              ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+
+              # перезапускаем tmux
+              tmux kill-session -t "$APP_NAME" || true
+              cd "$CURRENT_LINK"
+
+              # загружаем env при наличии
+              set -a; [ -f ./.env.production ] && . ./.env.production; set +a
+
+              : "${PORT:=3000}"
+              : "${HOST:=127.0.0.1}"
+
+              tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
+
+              # простая проверка, что сессия запустилась
+              tmux ls | grep -q "$APP_NAME" && echo "tmux session '$APP_NAME' started"
+            EOSSH
 
       - name: ✅ Smoke test
         if: ${{ vars.PUBLIC_URL != '' }}
