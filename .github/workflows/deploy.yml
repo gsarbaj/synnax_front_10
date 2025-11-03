@@ -88,16 +88,21 @@ jobs:
             'whoami && echo OK'
 
       # ==== Деплой ====
+      # === Upload bundle ===
       - name: 📤 Upload bundle to server (new release)
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euxo pipefail
-          RELEASE_DIR="${{ env.RELEASES_DIR }}/$TS"
-          ssh -p "${{ env.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '$RELEASE_DIR'"
-          rsync -e "ssh -p ${{ env.SSH_PORT }}" -az --delete \
-            deploy_bundle/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE_DIR/"
+          RELEASE_DIR="${RELEASES_DIR}/${TS}"
+          # создаём каталог релиза на сервере
+          ssh -p "${SSH_PORT}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${RELEASE_DIR}'"
+          # выгружаем бандл
+          rsync -e "ssh -p ${SSH_PORT}" -az --delete \
+            deploy_bundle/ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${RELEASE_DIR}/"
 
+      # === Switch + restart ===
       - name: 🔁 Atomic symlink switch + tmux restart
         env:
           TS: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -105,37 +110,42 @@ jobs:
           set -euxo pipefail
           RELEASE_DIR="${RELEASES_DIR}/${TS}"
 
-          # Перекидываем переменные окружения на удалённую сторону и выполняем скрипт
+          # передаём переменные окружения в удалённую сессию и запускаем скрипт
           ssh -p "${SSH_PORT}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             CURRENT_LINK="${CURRENT_LINK}" \
             APP_NAME="${APP_NAME}" \
             RELEASE_DIR="${RELEASE_DIR}" \
             'bash -s' <<'EOSSH'
-              set -euo pipefail
+set -euo pipefail
 
-              # sanity checks
-              [ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
-              mkdir -p "$(dirname "$CURRENT_LINK")"
+# 1) sanity checks
+[ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
+mkdir -p "$(dirname "$CURRENT_LINK")"
 
-              # переключаем симлинк
-              ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+# 2) переключаем current → новый релиз (атомарно)
+ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 
-              # перезапускаем tmux
-              tmux kill-session -t "$APP_NAME" || true
-              cd "$CURRENT_LINK"
+# 3) перезапуск через tmux (молча, если сессии нет)
+if command -v tmux >/dev/null 2>&1; then
+  tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
+else
+  echo "tmux not found on server"; exit 1
+fi
 
-              # загружаем env при наличии
-              set -a; [ -f ./.env.production ] && . ./.env.production; set +a
+cd "$CURRENT_LINK"
 
-              : "${PORT:=3000}"
-              : "${HOST:=127.0.0.1}"
+# 4) подгружаем env, если есть
+set -a; [ -f ./.env.production ] && . ./.env.production; set +a
 
-              tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
+: "${PORT:=3000}"
+: "${HOST:=127.0.0.1}"
 
-              # простая проверка, что сессия запустилась
-              tmux ls | grep -q "$APP_NAME" && echo "tmux session '$APP_NAME' started"
-            EOSSH
+tmux new -d -s "$APP_NAME" "cd '$CURRENT_LINK' && NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
 
+# 5) лёгкая проверка
+tmux ls >/dev/null 2>&1 && echo "tmux session '$APP_NAME' started"
+EOSSH
+      
       - name: ✅ Smoke test
         if: ${{ vars.PUBLIC_URL != '' }}
         run: curl -fsSL --max-time 5 "${{ vars.PUBLIC_URL }}/" >/dev/null
