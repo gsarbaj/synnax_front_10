@@ -80,9 +80,17 @@ jobs:
 
       - name: 🔑 Configure SSH
         run: |
-          install -m 600 /dev/null ~/.ssh/id_ed25519
-          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          set -eux
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # пишем приватный ключ (и на всякий случай убираем CRLF, если ключ копировали из Windows)
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          # known_hosts для хоста (и выставим права)
           ssh-keyscan -p ${{ env.SSH_PORT }} -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: 📤 Upload bundle to server (new release)
         env:
