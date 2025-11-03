@@ -7,7 +7,7 @@ on:
 
 env:
   NODE_VERSION: '20.x'
-  WORKDIR: frontend
+  WORKDIR: .                      # проект в КОРНЕ
   APP_NAME: app_synnax
   RELEASES_DIR: /var/www/synnax/releases
   CURRENT_LINK: /var/www/synnax/current
@@ -21,28 +21,25 @@ jobs:
       - name: ⬇️ Checkout
         uses: actions/checkout@v4
 
-      # Диагностика путей (один раз полезно оставить)
+      # Диагностика путей (разово полезно)
       - name: 🔎 Debug paths
         run: |
           echo "WORKDIR=${{ env.WORKDIR }}"
           ls -la
           echo "----"
-          ls -la "${{ env.WORKDIR }}" || true
-          echo "----"
-          [ -f "${{ env.WORKDIR }}/package-lock.json" ] && echo "package-lock.json FOUND" || (echo "package-lock.json MISSING" && exit 1)
+          [ -f "package-lock.json" ] && echo "package-lock.json FOUND" || (echo "package-lock.json MISSING" && exit 1)
 
       - name: 🟢 Setup Node (без встроенного кэша)
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # Ручной кэш npm (ключ — хэш package-lock.json из frontend/)
-      # Если lock-файл не в frontend/, поменяй путь ниже!
+      # Ручной кэш npm по хэшу КОРНЕВОГО package-lock.json
       - name: ♻️ Cache npm (~/.npm)
         uses: actions/cache@v4
         with:
           path: ~/.npm
-          key: npm-${{ hashFiles(format('{0}/package-lock.json', env.WORKDIR)) }}
+          key: npm-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             npm-
 
@@ -75,10 +72,10 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p deploy_bundle
-          rsync -a --delete "$WORKDIR/.next/standalone/" deploy_bundle/
-          rsync -a "$WORKDIR/.next/static" deploy_bundle/.next/static
-          rsync -a "$WORKDIR/public" deploy_bundle/public || true
-          cp "$WORKDIR/.env.production" deploy_bundle/.env.production
+          rsync -a --delete ".next/standalone/" deploy_bundle/
+          rsync -a ".next/static" deploy_bundle/.next/static
+          rsync -a "public" deploy_bundle/public || true
+          cp ".env.production" deploy_bundle/.env.production
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
 
       - name: 🔑 Configure SSH
