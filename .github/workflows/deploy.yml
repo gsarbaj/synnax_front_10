@@ -23,6 +23,7 @@ jobs:
 
       - name: 🔎 Confirm repo layout
         run: |
+          set -euxo pipefail
           echo "Default branch is main? (триггер из push работает именно для main)"
           ls -la
           [ -f package.json ] || { echo "package.json not found in repo root"; exit 1; }
@@ -62,6 +63,8 @@ jobs:
           rsync -a "public" deploy_bundle/public || true
           cp ".env.production" deploy_bundle/.env.production
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
+          # sanity: ensure standalone entry exists
+          [ -f deploy_bundle/server.js ] || { echo "server.js not found in bundle (Next.js standalone)"; ls -la deploy_bundle; exit 1; }
 
       - name: 🔑 Start ssh-agent (load key)
         uses: webfactory/ssh-agent@v0.9.0
@@ -104,19 +107,42 @@ jobs:
             RELEASE_DIR="${RELEASE_DIR}" \
             'bash -s' <<'EOSSH'
               set -euo pipefail
+              trap 'echo "FAILED at line $LINENO: $BASH_COMMAND" >&2' ERR
+
+              : "${APP_NAME:?APP_NAME is empty}"
+              case "$APP_NAME" in *:*) echo "APP_NAME must not contain ':'"; exit 1;; esac
+
               [ -d "$RELEASE_DIR" ] || { echo "Release dir missing: $RELEASE_DIR"; exit 1; }
-              mkdir -p "$(dirname "$CURRENT_LINK")"
+
+              # Ensure we can write the link directory
+              LINK_DIR="$(dirname "$CURRENT_LINK")"
+              mkdir -p "$LINK_DIR"
+              test -w "$LINK_DIR" || { echo "No write permission to $LINK_DIR"; ls -ld "$LINK_DIR"; exit 1; }
+
               ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
-              if command -v tmux >/dev/null 2>&1; then
-                tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
-              else
-                echo "tmux not found on server"; exit 1
-              fi
+
+              # tmux presence
+              command -v tmux >/dev/null 2>&1 || { echo "tmux not found on server"; exit 1; }
+
+              # Prepare env
               cd "$CURRENT_LINK"
               set -a; [ -f ./.env.production ] && . ./.env.production; set +a
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
-              tmux new -d -s "$APP_NAME" "NODE_ENV=production HOST=$HOST PORT=$PORT node server.js"
-              tmux ls >/dev/null 2>&1 && echo "tmux session '$APP_NAME' started"
+
+              # Ensure node is available even under non-interactive shells
+              if ! command -v node >/dev/null 2>&1; then
+                if [ -s "$HOME/.nvm/nvm.sh" ]; then
+                  . "$HOME/.nvm/nvm.sh"
+                  nvm use --lts >/dev/null 2>&1 || true
+                fi
+              fi
+              command -v node >/dev/null 2>&1 || { echo "node not found in PATH"; exit 1; }
+
+              # Restart tmux session
+              tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
+              tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && NODE_ENV=production HOST='$HOST' PORT='$PORT' node server.js"
+
+              tmux has-session -t "$APP_NAME" 2>/dev/null && echo "tmux session '$APP_NAME' started" || { echo "tmux session failed"; exit 1; }
           EOSSH
 
       - name: ✅ Smoke test
