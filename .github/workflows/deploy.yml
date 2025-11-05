@@ -243,8 +243,8 @@ jobs:
 
               # Restart tmux session using absolute node path and login shell
               tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
-              tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && export NODE_ENV=production HOST='$HOST' PORT='$PORT'; exec '$NODE_BIN' server.js"
-
+              tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && export NODE_ENV=production HOST='$HOST' PORT='$PORT'; mkdir -p logs; set -o pipefail; '$NODE_BIN' server.js 2>&1 | tee -a logs/app.log"
+  
               tmux has-session -t "$APP_NAME" 2>/dev/null && echo "tmux session '$APP_NAME' started" || { echo "tmux session failed"; exit 1; }
           EOSSH
 
