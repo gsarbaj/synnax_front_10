@@ -154,7 +154,7 @@ jobs:
                   fi
                   break
                 fi
-              fi
+              done
 
               # Resolve absolute path to Node.js (supports nvm/asdf/volta/system installs)
               resolve_node() {
