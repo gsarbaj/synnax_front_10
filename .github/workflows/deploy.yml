@@ -62,6 +62,14 @@ jobs:
           rsync -a ".next/static" deploy_bundle/.next/static
           rsync -a "public" deploy_bundle/public || true
           cp ".env.production" deploy_bundle/.env.production
+          NODE_BIN="$(command -v node || true)"
+          if [ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ]; then
+            mkdir -p deploy_bundle/bin
+            rsync -a "$NODE_BIN" deploy_bundle/bin/node
+            chmod 755 deploy_bundle/bin/node
+          else
+            echo "Warning: unable to capture Node.js binary from build environment" >&2
+          fi
           echo "Build $GITHUB_REPOSITORY@$GITHUB_SHA" > deploy_bundle/RELEASE.txt
           # sanity: ensure standalone entry exists
           [ -f deploy_bundle/server.js ] || { echo "server.js not found in bundle (Next.js standalone)"; ls -la deploy_bundle; exit 1; }
@@ -222,7 +230,13 @@ jobs:
                 fi
                 printf '%s' "$bin"
               }
-              NODE_BIN="$(resolve_node)"
+              if [ -x "$CURRENT_LINK/bin/node" ]; then
+                NODE_BIN="$CURRENT_LINK/bin/node"
+              elif [ -x "$RELEASE_DIR/bin/node" ]; then
+                NODE_BIN="$RELEASE_DIR/bin/node"
+              else
+                NODE_BIN="$(resolve_node)"
+              fi
               [ -x "$NODE_BIN" ] || { echo "node not found; install Node.js or expose it in PATH (checked nvm/asdf/volta/system)"; exit 1; }
               echo "Using node: $NODE_BIN"
               "$NODE_BIN" -v
