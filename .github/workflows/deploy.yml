@@ -105,6 +105,7 @@ jobs:
             CURRENT_LINK="${CURRENT_LINK}" \
             APP_NAME="${APP_NAME}" \
             RELEASE_DIR="${RELEASE_DIR}" \
+            NODE_VERSION="${NODE_VERSION:-}" \
             'bash -s' <<'EOSSH'
               set -euo pipefail
               trap 'echo "FAILED at line $LINENO: $BASH_COMMAND" >&2' ERR
@@ -132,12 +133,19 @@ jobs:
               # Preload nvm in non-interactive shell so resolve_node can see Node.js
               export NVM_DIR="${NVM_DIR:-"$HOME/.nvm"}"
               if [ -s "$NVM_DIR/nvm.sh" ]; then
+                set +u
                 . "$NVM_DIR/nvm.sh"
-                if [ -n "${NODE_VERSION:-}" ]; then
-                  wanted_version="${NODE_VERSION/.x/}"
-                  nvm use --silent "$wanted_version" >/dev/null 2>&1 || nvm install "$wanted_version" >/dev/null 2>&1 || true
+                set -u
+                desired="${NODE_VERSION:-}"
+                if [ -n "$desired" ]; then
+                  desired="${desired/.x/}"
+                  if ! nvm version "$desired" >/dev/null 2>&1; then
+                    nvm install "$desired"
+                  fi
+                  nvm use "$desired" >/dev/null 2>&1 || true
                 else
-                  nvm use --silent default >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+                  nvm install --lts >/dev/null 2>&1 || true
+                  nvm use --lts >/dev/null 2>&1 || true
                 fi
               fi
 
