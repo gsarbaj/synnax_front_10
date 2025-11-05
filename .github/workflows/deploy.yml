@@ -131,30 +131,44 @@ jobs:
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
 
               # Preload nvm in non-interactive shell so resolve_node can see Node.js
-              for candidate in "${NVM_DIR:-}" "$HOME/.nvm" "$HOME/.config/nvm" "/usr/local/nvm" "/usr/local/opt/nvm" "/opt/nvm"; do
-                if [ -n "$candidate" ] && [ -s "$candidate/nvm.sh" ]; then
-                  export NVM_DIR="$candidate"
-                  set +u
-                  . "$NVM_DIR/nvm.sh"
-                  set -u
-                  desired="${NODE_VERSION:-}"
-                  if [ -n "$desired" ]; then
-                    desired="${desired/.x/}"
-                    if ! nvm version "$desired" >/dev/null 2>&1; then
-                      nvm install "$desired"
-                    fi
-                    nvm use "$desired" >/dev/null 2>&1 || true
-                  else
-                    nvm install --lts >/dev/null 2>&1 || true
-                    nvm use --lts >/dev/null 2>&1 || true
+              load_nvm() {
+                local candidate=""
+                set +u
+                for candidate in "${NVM_DIR:-}" "$HOME/.nvm" "$HOME/.config/nvm" "/usr/local/nvm" "/usr/local/opt/nvm" "/opt/nvm"; do
+                  if [ -n "$candidate" ] && [ -s "$candidate/nvm.sh" ]; then
+                    export NVM_DIR="$candidate"
+                    . "$NVM_DIR/nvm.sh"
+                    set -u
+                    return 0
                   fi
-                  current_node="$(nvm which current 2>/dev/null || true)"
-                  if [ -n "$current_node" ] && [ -x "$current_node" ]; then
-                    export PATH="$(dirname "$current_node"):$PATH"
+                done
+                set -u
+                return 1
+              }
+
+              if load_nvm; then
+                target="${NODE_VERSION:-}"
+                if [ -n "$target" ]; then
+                  target="${target%.x}"
+                  if ! nvm version "$target" >/dev/null 2>&1; then
+                    nvm install "$target"
                   fi
-                  break
+                  nvm use "$target" >/dev/null 2>&1 || true
+                else
+                  nvm install --lts >/dev/null 2>&1 || true
+                  nvm use --lts >/dev/null 2>&1 || true
+                  target="$(nvm current || true)"
                 fi
-              done
+                current_node="$(nvm which current 2>/dev/null || true)"
+                if [ -n "$current_node" ] && [ -x "$current_node" ]; then
+                  export PATH="$(dirname "$current_node"):$PATH"
+                  echo "nvm resolved node at $current_node"
+                else
+                  echo "nvm loaded but node path unresolved" >&2
+                fi
+              else
+                echo "nvm not detected in standard locations" >&2
+              fi
 
               # Resolve absolute path to Node.js (supports nvm/asdf/volta/system installs)
               resolve_node() {
