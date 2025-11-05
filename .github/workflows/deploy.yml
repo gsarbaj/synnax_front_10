@@ -129,6 +129,18 @@ jobs:
               set -a; [ -f ./.env.production ] && . ./.env.production; set +a
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
 
+              # Preload nvm in non-interactive shell so resolve_node can see Node.js
+              export NVM_DIR="${NVM_DIR:-"$HOME/.nvm"}"
+              if [ -s "$NVM_DIR/nvm.sh" ]; then
+                . "$NVM_DIR/nvm.sh"
+                if [ -n "${NODE_VERSION:-}" ]; then
+                  wanted_version="${NODE_VERSION/.x/}"
+                  nvm use --silent "$wanted_version" >/dev/null 2>&1 || nvm install "$wanted_version" >/dev/null 2>&1 || true
+                else
+                  nvm use --silent default >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+                fi
+              fi
+
               # Resolve absolute path to Node.js (supports nvm/asdf/volta/system installs)
               resolve_node() {
                 local bin=""
@@ -170,11 +182,11 @@ jobs:
               [ -x "$NODE_BIN" ] || { echo "node not found; install Node.js or expose it in PATH (checked nvm/asdf/volta/system)"; exit 1; }
               echo "Using node: $NODE_BIN"
               "$NODE_BIN" -v
-              
+
               # Restart tmux session using absolute node path and login shell
               tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
               tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && export NODE_ENV=production HOST='$HOST' PORT='$PORT'; exec '$NODE_BIN' server.js"
-              
+
               tmux has-session -t "$APP_NAME" 2>/dev/null && echo "tmux session '$APP_NAME' started" || { echo "tmux session failed"; exit 1; }
           EOSSH
 
