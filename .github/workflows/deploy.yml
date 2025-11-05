@@ -131,43 +131,65 @@ jobs:
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
 
               # Preload nvm in non-interactive shell so resolve_node can see Node.js
-              export NVM_DIR="${NVM_DIR:-"$HOME/.nvm"}"
-              if [ -s "$NVM_DIR/nvm.sh" ]; then
-                set +u
-                . "$NVM_DIR/nvm.sh"
-                set -u
-                desired="${NODE_VERSION:-}"
-                if [ -n "$desired" ]; then
-                  desired="${desired/.x/}"
-                  if ! nvm version "$desired" >/dev/null 2>&1; then
-                    nvm install "$desired"
+              for candidate in "${NVM_DIR:-}" "$HOME/.nvm" "$HOME/.config/nvm" "/usr/local/nvm" "/usr/local/opt/nvm" "/opt/nvm"; do
+                if [ -n "$candidate" ] && [ -s "$candidate/nvm.sh" ]; then
+                  export NVM_DIR="$candidate"
+                  set +u
+                  . "$NVM_DIR/nvm.sh"
+                  set -u
+                  desired="${NODE_VERSION:-}"
+                  if [ -n "$desired" ]; then
+                    desired="${desired/.x/}"
+                    if ! nvm version "$desired" >/dev/null 2>&1; then
+                      nvm install "$desired"
+                    fi
+                    nvm use "$desired" >/dev/null 2>&1 || true
+                  else
+                    nvm install --lts >/dev/null 2>&1 || true
+                    nvm use --lts >/dev/null 2>&1 || true
                   fi
-                  nvm use "$desired" >/dev/null 2>&1 || true
-                else
-                  nvm install --lts >/dev/null 2>&1 || true
-                  nvm use --lts >/dev/null 2>&1 || true
+                  current_node="$(nvm which current 2>/dev/null || true)"
+                  if [ -n "$current_node" ] && [ -x "$current_node" ]; then
+                    export PATH="$(dirname "$current_node"):$PATH"
+                  fi
+                  break
                 fi
               fi
 
               # Resolve absolute path to Node.js (supports nvm/asdf/volta/system installs)
               resolve_node() {
                 local bin=""
+                local nvm_bin=""
                 # 1) PATH
                 bin="$(command -v node || true)"
                 # 2) nvm (user/system-wide)
                 if [ -z "$bin" ]; then
-                  for nvm_sh in "$HOME/.nvm/nvm.sh" "/usr/local/nvm/nvm.sh" "/opt/nvm/nvm.sh"; do
+                  if command -v nvm >/dev/null 2>&1; then
+                    nvm_bin="$(nvm which current 2>/dev/null || true)"
+                    if [ -n "$nvm_bin" ] && [ -x "$nvm_bin" ]; then
+                      bin="$nvm_bin"
+                    fi
+                  fi
+                fi
+                if [ -z "$bin" ]; then
+                  for nvm_sh in "$HOME/.nvm/nvm.sh" "$HOME/.config/nvm/nvm.sh" "/usr/local/nvm/nvm.sh" "/usr/local/opt/nvm/nvm.sh" "/opt/nvm/nvm.sh"; do
                     if [ -s "$nvm_sh" ]; then
                       . "$nvm_sh"
                       nvm use --lts >/dev/null 2>&1 || true
-                      bin="$(command -v node || true)"
-                      [ -n "$bin" ] && break
+                      bin="$(nvm which current 2>/dev/null || command -v node || true)"
+                      if [ -n "$bin" ] && [ -x "$bin" ]; then
+                        break
+                      fi
+                      bin=""
                     fi
                   done
                 fi
                 # 3) newest nvm version if present
                 if [ -z "$bin" ] && [ -d "$HOME/.nvm/versions/node" ]; then
                   bin="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n1)/node"
+                fi
+                if [ -z "$bin" ] && [ -d "$HOME/.config/nvm/versions/node" ]; then
+                  bin="$(ls -d "$HOME"/.config/nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n1)/node"
                 fi
                 # 4) asdf
                 if [ -z "$bin" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
