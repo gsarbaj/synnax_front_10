@@ -129,18 +129,31 @@ jobs:
               set -a; [ -f ./.env.production ] && . ./.env.production; set +a
               : "${PORT:=3000}"; : "${HOST:=127.0.0.1}"
 
-              # Ensure node is available even under non-interactive shells
-              if ! command -v node >/dev/null 2>&1; then
+              # Resolve absolute path to node (works with nvm/asdf or system installs)
+              NODE_BIN="$(command -v node || true)"
+              if [ -z "$NODE_BIN" ]; then
+                # Try nvm
                 if [ -s "$HOME/.nvm/nvm.sh" ]; then
                   . "$HOME/.nvm/nvm.sh"
                   nvm use --lts >/dev/null 2>&1 || true
+                  NODE_BIN="$(command -v node || true)"
                 fi
               fi
-              command -v node >/dev/null 2>&1 || { echo "node not found in PATH"; exit 1; }
+              if [ -z "$NODE_BIN" ] && [ -d "$HOME/.nvm/versions/node" ]; then
+                # Fallback: grab the newest nvm node
+                NODE_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n1)/node"
+              fi
+              if [ -z "$NODE_BIN" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
+                # Try asdf
+                . "$HOME/.asdf/asdf.sh"
+                NODE_BIN="$(command -v node || true)"
+              fi
+              [ -x "$NODE_BIN" ] || { echo "node not found; install Node.js or expose it in PATH"; exit 1; }
+              "$NODE_BIN" -v
 
-              # Restart tmux session
+              # Restart tmux session using absolute node path and login shell
               tmux kill-session -t "$APP_NAME" >/dev/null 2>&1 || true
-              tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && NODE_ENV=production HOST='$HOST' PORT='$PORT' node server.js"
+              tmux new -d -s "$APP_NAME" -- bash -lc "cd '$CURRENT_LINK' && export NODE_ENV=production HOST='$HOST' PORT='$PORT'; exec '$NODE_BIN' server.js"
 
               tmux has-session -t "$APP_NAME" 2>/dev/null && echo "tmux session '$APP_NAME' started" || { echo "tmux session failed"; exit 1; }
           EOSSH
