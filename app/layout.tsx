@@ -34,6 +34,7 @@ export default function RootLayout({
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
+          storageKey="synnax-theme"
       >
 
       <main>
