@@ -59,8 +59,8 @@ jobs:
           set -euxo pipefail
           mkdir -p deploy_bundle
           rsync -a --delete ".next/standalone/" deploy_bundle/
-          rsync -a ".next/static" deploy_bundle/.next/static
-          rsync -a "public" deploy_bundle/public || true
+          rsync -a ".next/static/" deploy_bundle/.next/
+          rsync -a "public/" deploy_bundle/ || true
           cp ".env.production" deploy_bundle/.env.production
           NODE_BIN="$(command -v node || true)"
           if [ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ]; then
